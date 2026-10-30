@@ -29,24 +29,46 @@ type Checker struct {
 	Client  *http.Client
 	Workers int
 	Timeout time.Duration
+	// Retries is how many extra attempts a link gets after a network error
+	// or a 5xx response, which are often temporary.
+	Retries int
+	// RetryWait is the pause before the first retry; it doubles each time.
+	RetryWait time.Duration
 }
 
 func NewChecker(workers int, timeout time.Duration) *Checker {
-	return &Checker{Client: &http.Client{}, Workers: workers, Timeout: timeout}
+	return &Checker{Client: &http.Client{}, Workers: workers, Timeout: timeout, Retries: 2, RetryWait: 500 * time.Millisecond}
 }
 
 // Check checks one URL. It tries HEAD first and falls back to GET, because
 // many servers reject HEAD with 403, 404 or 405 even when the page exists.
 func (c *Checker) Check(ctx context.Context, url string) Result {
-	status, err := c.request(ctx, http.MethodHead, url)
-	if err != nil || status >= 400 {
-		status, err = c.request(ctx, http.MethodGet, url)
+	status, err := c.attempt(ctx, url)
+	wait := c.RetryWait
+retry:
+	for i := 0; i < c.Retries && (err != nil || status >= 500); i++ {
+		select {
+		case <-ctx.Done():
+			break retry
+		case <-time.After(wait):
+		}
+		wait *= 2
+		status, err = c.attempt(ctx, url)
 	}
 	r := Result{URL: url, Status: status}
 	if err != nil {
 		r.Err = err.Error()
 	}
 	return r
+}
+
+// attempt tries HEAD and falls back to GET.
+func (c *Checker) attempt(ctx context.Context, url string) (int, error) {
+	status, err := c.request(ctx, http.MethodHead, url)
+	if err != nil || status >= 400 {
+		status, err = c.request(ctx, http.MethodGet, url)
+	}
+	return status, err
 }
 
 func (c *Checker) request(ctx context.Context, method, url string) (int, error) {

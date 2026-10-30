@@ -32,6 +32,7 @@ linkcheck -ignore 'localhost|example\.com' README.md
 | `-depth` | 1 | how many levels of same-site pages to crawl |
 | `-json` | off | print every result as JSON |
 | `-ignore` | | skip links matching a regular expression |
+| `-retries` | 2 | extra attempts after a network error or 5xx response |
 
 The exit code is `1` when any link is broken, so it works as a CI step:
 
@@ -44,6 +45,7 @@ The exit code is `1` when any link is broken, so it works as a CI step:
 
 - Finds links in Markdown (`[text](url)`, `<url>`) and HTML (`href`, `src`), and resolves relative links on crawled pages.
 - Tries a `HEAD` request first and falls back to `GET`, since many servers reject `HEAD` even when the page exists.
+- Retries network errors and 5xx responses (twice by default, waiting 0.5s then 1s), since those are often temporary. A 404 is not retried.
 - Counts 4xx/5xx responses and network errors as broken. `429 Too Many Requests` is not counted, since the page usually exists.
 - Checks links in parallel with a worker pool, and checks each URL only once.
 

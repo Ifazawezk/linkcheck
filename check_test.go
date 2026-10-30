@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -44,5 +45,44 @@ func TestCheckAll(t *testing.T) {
 	}
 	if got[2].Status != http.StatusNotFound {
 		t.Errorf("missing page status = %d, want 404", got[2].Status)
+	}
+}
+
+func TestRetriesTransientErrors(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Fail the first HEAD and GET, then succeed.
+		if calls.Add(1) <= 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewChecker(1, time.Second)
+	c.RetryWait = time.Millisecond
+	if r := c.Check(context.Background(), srv.URL); r.Broken() {
+		t.Fatalf("expected success after retry, got status %d err %q", r.Status, r.Err)
+	}
+
+	c.Retries = 0
+	calls.Store(0)
+	if r := c.Check(context.Background(), srv.URL); !r.Broken() {
+		t.Fatal("expected failure with retries disabled")
+	}
+}
+
+func TestNoRetryOn404(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewChecker(1, time.Second)
+	c.RetryWait = time.Millisecond
+	c.Check(context.Background(), srv.URL)
+	if n := calls.Load(); n != 2 { // one HEAD and one GET, no retries
+		t.Fatalf("got %d requests, want 2", n)
 	}
 }
