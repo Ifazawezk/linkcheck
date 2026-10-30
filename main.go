@@ -18,6 +18,7 @@ func main() {
 	depth := flag.Int("depth", 1, "for a URL: how many levels of same-site pages to follow")
 	asJSON := flag.Bool("json", false, "print all results as JSON")
 	ignore := flag.String("ignore", "", "skip links matching this regular expression")
+	retries := flag.Int("retries", 2, "extra attempts for network errors and 5xx responses")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: linkcheck [flags] FILE|URL...")
 		flag.PrintDefaults()
@@ -39,6 +40,7 @@ func main() {
 
 	ctx := context.Background()
 	checker := NewChecker(*workers, *timeout)
+	checker.Retries = max(0, *retries)
 
 	var links []Link
 	seen := map[string]bool{}
