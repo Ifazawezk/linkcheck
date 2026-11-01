@@ -37,7 +37,7 @@ linkcheck -root public public/*.html   # also check links that start with /
 | `-retries` | 2 | extra attempts after a network error or 5xx response |
 | `-root` | | for files, the folder that links starting with `/` point into |
 
-The exit code is `1` when any link is broken, so it works as a CI step:
+The exit code is `1` when any link is broken, so it works as a CI step. It is `2` when linkcheck can't do the job: a flag is wrong, a file can't be read, or the first page of a crawl can't be loaded, so a site that is down never passes as "0 broken".
 
 ```yaml
 - run: go install github.com/Ifazawezk/linkcheck@latest
@@ -53,8 +53,9 @@ The exit code is `1` when any link is broken, so it works as a CI step:
 - Requires the exact case of a file name, because a link that opens on Windows or macOS can be a 404 on GitHub.
 - Accepts a page linked without its extension, like `./guide/setup` for `guide/setup.md`, as docs sites such as VitePress and Docusaurus allow. In HTML files, `about` can mean `about.html`.
 - Skips links that start with `/` unless `-root` is set, since they depend on where the site is served from, and links with template code in them like `{{ url }}` or `%BASE_URL%`.
+- When crawling, stays on the host the first page ends up on, so a site that redirects from `example.com` to `www.example.com` is still followed.
 - Tries a `HEAD` request first and falls back to `GET`, since many servers reject `HEAD` even when the page exists.
-- Retries network errors and 5xx responses (twice by default, waiting 0.5s then 1s), since those are often temporary. A 404 is not retried.
+- Retries network errors and 5xx responses (twice by default, waiting 0.5s then 1s), since those are often temporary. This includes pages it loads to crawl. A 404 is not retried.
 - Counts 4xx/5xx responses and network errors as broken. `429 Too Many Requests` is not counted, since the page usually exists.
 - Checks web links in parallel with a worker pool, and checks each URL only once, so a broken URL is reported at the first place it appears.
 

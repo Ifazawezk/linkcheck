@@ -44,23 +44,29 @@ func NewChecker(workers int, timeout time.Duration) *Checker {
 // Check checks one URL. It tries HEAD first and falls back to GET, because
 // many servers reject HEAD with 403, 404 or 405 even when the page exists.
 func (c *Checker) Check(ctx context.Context, url string) Result {
-	status, err := c.attempt(ctx, url)
-	wait := c.RetryWait
-retry:
-	for i := 0; i < c.Retries && (err != nil || status >= 500); i++ {
-		select {
-		case <-ctx.Done():
-			break retry
-		case <-time.After(wait):
-		}
-		wait *= 2
-		status, err = c.attempt(ctx, url)
-	}
+	status, err := c.retry(ctx, func() (int, error) { return c.attempt(ctx, url) })
 	r := Result{URL: url, Status: status}
 	if err != nil {
 		r.Err = err.Error()
 	}
 	return r
+}
+
+// retry calls try, and calls it again up to Retries times while it returns a
+// network error or a 5xx status.
+func (c *Checker) retry(ctx context.Context, try func() (int, error)) (int, error) {
+	status, err := try()
+	wait := c.RetryWait
+	for i := 0; i < c.Retries && (err != nil || status >= 500); i++ {
+		select {
+		case <-ctx.Done():
+			return status, err
+		case <-time.After(wait):
+		}
+		wait *= 2
+		status, err = try()
+	}
+	return status, err
 }
 
 // attempt tries HEAD and falls back to GET.

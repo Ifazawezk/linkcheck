@@ -93,6 +93,21 @@ func TestRunJSONHasLineNumbers(t *testing.T) {
 	}
 }
 
+func TestRunExits2WhenASiteIsDown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-retries", "0", srv.URL + "/"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "status 500") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
 func TestRunUsageErrors(t *testing.T) {
 	for _, args := range [][]string{nil, {"-nope"}, {"-ignore", "(", "a.md"}, {"does-not-exist.md"}} {
 		var stdout, stderr bytes.Buffer
