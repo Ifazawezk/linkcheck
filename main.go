@@ -2,63 +2,79 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
 
 func main() {
-	workers := flag.Int("workers", 16, "number of links to check at the same time")
-	timeout := flag.Duration("timeout", 10*time.Second, "timeout for each request")
-	depth := flag.Int("depth", 1, "for a URL: how many levels of same-site pages to follow")
-	asJSON := flag.Bool("json", false, "print all results as JSON")
-	ignore := flag.String("ignore", "", "skip links matching this regular expression")
-	retries := flag.Int("retries", 2, "extra attempts for network errors and 5xx responses")
-	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: linkcheck [flags] FILE|URL...")
-		flag.PrintDefaults()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run is the whole program apart from os.Exit, so tests can call it. It
+// returns 0 when no link is broken, 1 when one is, and 2 when it can't run.
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("linkcheck", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	workers := fs.Int("workers", 16, "number of links to check at the same time")
+	timeout := fs.Duration("timeout", 10*time.Second, "timeout for each request")
+	depth := fs.Int("depth", 1, "for a URL: how many levels of same-site pages to follow")
+	asJSON := fs.Bool("json", false, "print all results as JSON")
+	ignore := fs.String("ignore", "", "skip links matching this regular expression")
+	retries := fs.Int("retries", 2, "extra attempts for network errors and 5xx responses")
+	root := fs.String("root", "", "for files: the folder that links starting with / point into (default: skip those links)")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: linkcheck [flags] FILE|URL...")
+		fs.PrintDefaults()
 	}
-	flag.Parse()
-	if flag.NArg() == 0 {
-		flag.Usage()
-		os.Exit(2)
+	if err := fs.Parse(args); err == flag.ErrHelp {
+		return 0
+	} else if err != nil {
+		return 2
+	}
+	if fs.NArg() == 0 {
+		fs.Usage()
+		return 2
 	}
 
 	var skip *regexp.Regexp
 	if *ignore != "" {
 		var err error
 		if skip, err = regexp.Compile(*ignore); err != nil {
-			fmt.Fprintln(os.Stderr, "bad -ignore pattern:", err)
-			os.Exit(2)
+			fmt.Fprintln(stderr, "bad -ignore pattern:", err)
+			return 2
 		}
 	}
+	skipped := func(link string) bool { return skip != nil && skip.MatchString(link) }
 
 	ctx := context.Background()
 	checker := NewChecker(*workers, *timeout)
 	checker.Retries = max(0, *retries)
+	local := NewLocalChecker(*root)
 
 	var links []Link
+	var localResults []Result
 	seen := map[string]bool{}
 	add := func(l Link) {
-		if skip != nil && skip.MatchString(l.URL) {
-			return
-		}
-		if !seen[l.URL] {
+		if !skipped(l.URL) && !seen[l.URL] {
 			seen[l.URL] = true
 			links = append(links, l)
 		}
 	}
-	for _, arg := range flag.Args() {
+	for _, arg := range fs.Args() {
 		if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
 			found, err := checker.Crawl(ctx, arg, *depth)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(2)
+				fmt.Fprintln(stderr, err)
+				return 2
 			}
 			for _, l := range found {
 				add(l)
@@ -67,11 +83,16 @@ func main() {
 		}
 		data, err := os.ReadFile(arg)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
+			fmt.Fprintln(stderr, err)
+			return 2
 		}
-		for _, u := range ExtractLinks(string(data), nil) {
-			add(Link{URL: u, Source: arg})
+		for _, f := range linksInFile(arg, string(data)) {
+			if u, ok := httpURL(f.Target, nil); ok {
+				add(Link{URL: u, Source: arg, Line: f.Line})
+			} else if r, ok := local.Check(arg, f.Target); ok && !skipped(f.Target) {
+				r.Source, r.Line = arg, f.Line
+				localResults = append(localResults, r)
+			}
 		}
 	}
 
@@ -81,10 +102,15 @@ func main() {
 	}
 	results := checker.CheckAll(ctx, urls)
 	for i := range results {
-		results[i].Source = links[i].Source
+		results[i].Source, results[i].Line = links[i].Source, links[i].Line
 	}
+	results = append(results, localResults...)
+	slices.SortStableFunc(results, func(a, b Result) int {
+		return cmp.Or(cmp.Compare(a.Source, b.Source), cmp.Compare(a.Line, b.Line))
+	})
+
 	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		enc.Encode(results)
 	}
@@ -99,11 +125,27 @@ func main() {
 			reason = r.Err
 		}
 		if !*asJSON {
-			fmt.Printf("BROKEN  %s  (%s)  in %s\n", r.URL, reason, r.Source)
+			where := r.Source
+			if r.Line > 0 {
+				where = fmt.Sprintf("%s:%d", r.Source, r.Line)
+			}
+			fmt.Fprintf(stdout, "BROKEN  %s  (%s)  in %s\n", r.URL, reason, where)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "%d links checked, %d broken\n", len(results), broken)
+	fmt.Fprintf(stderr, "%d links checked, %d broken\n", len(results), broken)
 	if broken > 0 {
-		os.Exit(1)
+		return 1
 	}
+	return 0
+}
+
+// linksInFile finds the links in a file, reading it by its type.
+func linksInFile(path, doc string) []Found {
+	switch {
+	case isHTML(path):
+		return FindHTMLLinks(doc)
+	case isMarkdown(path):
+		return FindLinks(hideCode(doc))
+	}
+	return FindLinks(doc)
 }
