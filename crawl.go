@@ -8,10 +8,12 @@ import (
 	"strings"
 )
 
-// Link is a URL together with the page or file it was found on.
+// Link is a URL together with the page or file it was found on, and for a
+// file the line.
 type Link struct {
 	URL    string
 	Source string
+	Line   int
 }
 
 // Crawl starts at start and follows links on the same host up to depth levels,

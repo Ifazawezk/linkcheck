@@ -52,6 +52,23 @@ func TestFindLinksKeepsOrderAndLines(t *testing.T) {
 	}
 }
 
+func TestFindHTMLLinksSkipsWhatIsNotOnThePage(t *testing.T) {
+	doc := `<script src="app.js"></script>
+<SCRIPT type="module">
+  var r = e[t](n);
+  el.innerHTML = '<a href="from-script.html">x</a>';
+</SCRIPT>
+<style>a { background: url(x.png); }</style>
+<!-- <a href="old.html">
+old</a> -->
+<a href="real.html">real</a>
+[not](markdown.md)`
+	want := []Found{{"app.js", 1}, {"real.html", 9}}
+	if got := FindHTMLLinks(doc); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func TestExtractHTMLResolvesRelative(t *testing.T) {
 	base, _ := url.Parse("https://site.com/blog/post.html")
 	doc := `<a href="/about">About</a> <img src='img/logo.png'> <a href="javascript:void(0)">x</a>`

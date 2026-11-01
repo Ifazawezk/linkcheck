@@ -17,6 +17,8 @@ var (
 	mdReference = regexp.MustCompile(`(?m)^ {0,3}\[[^\]^\n][^\]\n]*\]:[ \t]*<?([^\s<>]+)>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t\r]*$`)
 	// href="..." and src="..." in HTML.
 	htmlLink = regexp.MustCompile(`(?i)(?:href|src)\s*=\s*["']([^"']+)["']`)
+	// Comments, and script and style tags with what is inside them.
+	htmlHidden = regexp.MustCompile(`(?is)<!--.*?-->|(<(?:script|style)\b[^>]*>).*?</(?:script|style)\s*>`)
 )
 
 // Found is a link target as written in a document, and the line it is on.
@@ -25,15 +27,34 @@ type Found struct {
 	Line   int
 }
 
-// FindLinks returns every link target in a Markdown or HTML document, in
-// document order.
+// FindLinks returns every link target in a Markdown document, or in text of an
+// unknown kind, in document order.
 func FindLinks(doc string) []Found {
+	return findLinks(doc, mdLink, mdAutolink, mdReference, htmlLink)
+}
+
+// FindHTMLLinks returns every link target in an HTML document. The Markdown
+// patterns would read script code like a[b](c) as a link, and comments and
+// scripts can hold markup that is not on the page.
+func FindHTMLLinks(doc string) []Found {
+	b := []byte(doc)
+	for _, m := range htmlHidden.FindAllStringSubmatchIndex(doc, -1) {
+		from := m[0]
+		if m[2] >= 0 {
+			from = m[3] // keep the opening tag, for <script src="...">
+		}
+		blank(b, from, m[1])
+	}
+	return findLinks(string(b), htmlLink)
+}
+
+func findLinks(doc string, patterns ...*regexp.Regexp) []Found {
 	type hit struct {
 		offset int
 		target string
 	}
 	var hits []hit
-	for _, re := range []*regexp.Regexp{mdLink, mdAutolink, mdReference, htmlLink} {
+	for _, re := range patterns {
 		for _, m := range re.FindAllStringSubmatchIndex(doc, -1) {
 			for g := 2; g+1 < len(m); g += 2 {
 				if m[g] >= 0 {

@@ -13,6 +13,7 @@ type Result struct {
 	Status int    `json:"status,omitempty"`
 	Err    string `json:"error,omitempty"`
 	Source string `json:"source,omitempty"`
+	Line   int    `json:"line,omitempty"`
 }
 
 // Broken reports whether the link failed or returned a 4xx/5xx status.
