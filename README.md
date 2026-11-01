@@ -43,7 +43,8 @@ The exit code is `1` when any link is broken, so it works as a CI step:
 
 ## How it works
 
-- Finds links in Markdown (`[text](url)`, `<url>`) and HTML (`href`, `src`), and resolves relative links on crawled pages.
+- Finds links in Markdown (`[text](url)`, `[label]: url`, `<url>`) and HTML (`href`, `src`), and resolves relative links on crawled pages.
+- Skips fenced code blocks, inline code and HTML comments in Markdown files, since links there are usually sample text. Indented code blocks are still read.
 - Tries a `HEAD` request first and falls back to `GET`, since many servers reject `HEAD` even when the page exists.
 - Retries network errors and 5xx responses (twice by default, waiting 0.5s then 1s), since those are often temporary. A 404 is not retried.
 - Counts 4xx/5xx responses and network errors as broken. `429 Too Many Requests` is not counted, since the page usually exists.

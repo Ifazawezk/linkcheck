@@ -70,7 +70,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		for _, u := range ExtractLinks(string(data), nil) {
+		doc := string(data)
+		if isMarkdown(arg) {
+			doc = hideCode(doc)
+		}
+		for _, u := range ExtractLinks(doc, nil) {
 			add(Link{URL: u, Source: arg})
 		}
 	}
