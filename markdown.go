@@ -1,15 +1,87 @@
 package main
 
 import (
+	"fmt"
+	"html"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
 	htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
 	blankLine   = regexp.MustCompile(`\n[ \t\r]*\n`)
 )
+
+var (
+	atxHeading    = regexp.MustCompile(`^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t\r]*$`)
+	setextLine    = regexp.MustCompile(`^ {0,3}(?:=+|-+)[ \t\r]*$`)
+	customID      = regexp.MustCompile(`[ \t]*\{#([^\s}]+)\}$`)
+	headingLink   = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	headingTag    = regexp.MustCompile(`<[^>]*>`)
+	emphasisMarks = regexp.MustCompile(`(^|\s)_+|_+(\s|$)`)
+	idAttribute   = regexp.MustCompile(`(?i)\s(?:id|name)\s*=\s*["']([^"']+)["']`)
+)
+
+// markdownAnchors returns the anchors a Markdown document has, in lower case:
+// one for each heading, plus any set by hand with {#id} or an HTML id or name.
+// Headings are only looked for outside code blocks, where # is often a comment.
+func markdownAnchors(doc string) map[string]bool {
+	doc = blankFences(doc)
+	anchors := map[string]bool{}
+	lines := strings.Split(doc, "\n")
+	for i, line := range lines {
+		text := ""
+		if m := atxHeading.FindStringSubmatch(line); m != nil {
+			text = m[1]
+		} else if i+1 < len(lines) && setextLine.MatchString(lines[i+1]) {
+			text = strings.TrimSpace(line)
+		}
+		if text == "" {
+			continue
+		}
+		if m := customID.FindStringSubmatch(text); m != nil {
+			anchors[strings.ToLower(m[1])] = true
+			continue
+		}
+		// Repeated headings get -1, -2 and so on, the way GitHub numbers them.
+		base := headingSlug(text)
+		slug := base
+		for n := 1; anchors[slug]; n++ {
+			slug = fmt.Sprintf("%s-%d", base, n)
+		}
+		anchors[slug] = true
+	}
+	return htmlAnchors(doc, anchors)
+}
+
+// htmlAnchors adds the id and name attributes in doc to anchors.
+func htmlAnchors(doc string, anchors map[string]bool) map[string]bool {
+	for _, m := range idAttribute.FindAllStringSubmatch(doc, -1) {
+		anchors[strings.ToLower(m[1])] = true
+	}
+	return anchors
+}
+
+// headingSlug turns a heading into its anchor the way GitHub does: formatting
+// goes, spaces become hyphens, and letters and numbers in any script stay.
+func headingSlug(text string) string {
+	text = headingLink.ReplaceAllString(text, "$1")
+	text = headingTag.ReplaceAllString(text, "")
+	text = emphasisMarks.ReplaceAllString(text, "$1$2")
+	text = html.UnescapeString(text)
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(text)) {
+		switch {
+		case r == ' ' || r == '-':
+			b.WriteRune('-')
+		case unicode.IsLetter(r), unicode.IsMark(r), unicode.IsNumber(r), unicode.Is(unicode.Pc, r):
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // isMarkdown reports whether path is a Markdown file.
 func isMarkdown(path string) bool {

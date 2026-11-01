@@ -18,47 +18,90 @@ var templateCode = regexp.MustCompile(`\{\{|\{%|<%|\$\{|\$\(|%[A-Z][A-Z_]{2,}%`)
 type LocalChecker struct {
 	// Root is the folder that links starting with / point into. Those links
 	// can't be followed without it, so they are skipped when it is empty.
-	Root string
-	dirs map[string]map[string]bool // file names in each folder read so far
+	Root    string
+	dirs    map[string]map[string]bool // file names in each folder read so far
+	anchors map[string]map[string]bool // anchors in each file read so far
 }
 
 func NewLocalChecker(root string) *LocalChecker {
-	return &LocalChecker{Root: root, dirs: map[string]map[string]bool{}}
+	return &LocalChecker{Root: root, dirs: map[string]map[string]bool{}, anchors: map[string]map[string]bool{}}
 }
 
 // Check checks a link target found in the file source. It returns false if
 // the target isn't something it can check on disk.
 func (lc *LocalChecker) Check(source, target string) (Result, bool) {
 	u, ok := localTarget(target)
-	if !ok || u.Path == "" {
+	if !ok {
 		return Result{}, false
 	}
-	dir, rel := filepath.Dir(source), u.Path
-	if strings.HasPrefix(rel, "/") {
-		if lc.Root == "" {
-			return Result{}, false
-		}
-		dir, rel = lc.Root, strings.TrimLeft(rel, "/")
-	}
+	file := source
 	r := Result{URL: target}
-	path := filepath.Join(dir, filepath.FromSlash(rel))
-	if _, err := os.Stat(path); err == nil {
-		if name := lc.wrongCase(dir, rel); name != "" {
-			r.Err = fmt.Sprintf("wrong case, on disk it is %s", name)
-		}
-		return r, true
-	}
-	// Static sites and docs sites link to a page by its name alone.
-	for _, ext := range pageExtensions(source) {
-		if _, err := os.Stat(path + ext); err == nil {
-			if name := lc.wrongCase(dir, rel+ext); name != "" {
-				r.Err = fmt.Sprintf("wrong case, on disk it is %s", strings.TrimSuffix(name, ext))
+	switch {
+	case u.Path == "" && u.Fragment == "":
+		return Result{}, false
+	case u.Path != "":
+		dir, rel := filepath.Dir(source), u.Path
+		if strings.HasPrefix(rel, "/") {
+			if lc.Root == "" {
+				return Result{}, false
 			}
+			dir, rel = lc.Root, strings.TrimLeft(rel, "/")
+		}
+		if file, r.Err = lc.findFile(source, dir, rel); r.Err != "" {
 			return r, true
 		}
 	}
-	r.Err = "file not found"
+	if !lc.hasAnchor(file, u.Fragment) && u.RawQuery == "" {
+		r.Err = "no such heading or anchor"
+	}
 	return r, true
+}
+
+// findFile finds the file a link points at, and returns what is wrong with the
+// link if there is a problem.
+func (lc *LocalChecker) findFile(source, dir, rel string) (file, problem string) {
+	path := filepath.Join(dir, filepath.FromSlash(rel))
+	for _, ext := range append([]string{""}, pageExtensions(source)...) {
+		if _, err := os.Stat(path + ext); err != nil {
+			continue
+		}
+		if name := lc.wrongCase(dir, strings.TrimRight(rel, "/")+ext); name != "" {
+			return "", fmt.Sprintf("wrong case, on disk it is %s", strings.TrimSuffix(name, ext))
+		}
+		return path + ext, ""
+	}
+	return "", "file not found"
+}
+
+// hasAnchor reports whether a link to fragment in file lands somewhere. Only
+// Markdown and HTML have anchors to compare: script.py#L10 is left alone.
+func (lc *LocalChecker) hasAnchor(file, fragment string) bool {
+	if fragment == "" || !(isMarkdown(file) || isHTML(file)) {
+		return true
+	}
+	// #/about and #!/about are routes for a page's scripts, not places in it.
+	if strings.HasPrefix(fragment, "/") || strings.HasPrefix(fragment, "!") {
+		return true
+	}
+	// GitHub's page anchors compare without regard to case, so this does too.
+	fragment = strings.TrimPrefix(strings.ToLower(fragment), "user-content-")
+	if fragment == "top" || (fragment == "readme" && strings.HasPrefix(strings.ToLower(filepath.Base(file)), "readme")) {
+		return true
+	}
+	anchors, ok := lc.anchors[file]
+	if !ok {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return true // the file itself was checked already
+		}
+		if isMarkdown(file) {
+			anchors = markdownAnchors(string(data))
+		} else {
+			anchors = htmlAnchors(string(data), map[string]bool{})
+		}
+		lc.anchors[file] = anchors
+	}
+	return anchors[fragment]
 }
 
 // pageExtensions lists the extensions a link in source can leave out. VitePress,

@@ -46,6 +46,70 @@ func TestHideCodeKeepsLineNumbers(t *testing.T) {
 	}
 }
 
+func TestHeadingSlug(t *testing.T) {
+	tests := []struct{ heading, want string }{
+		{"Getting started", "getting-started"},
+		{"Install & run!", "install--run"},
+		{"What's new in v1.2?", "whats-new-in-v12"},
+		{"The `-json` flag", "the--json-flag"},
+		{"**Bold** and *italic*", "bold-and-italic"},
+		{"_Why_ this works", "why-this-works"},
+		{"snake_case_name", "snake_case_name"},
+		{"[Docs](https://a.dev) here", "docs-here"},
+		{`<a name="x"></a>Setup`, "setup"},
+		{"Q&amp;A", "qa"},
+		{"\U0001F680 Launch", "-launch"},             // an emoji is dropped
+		{"a " + string(rune(0x2013)) + " b", "a--b"}, // and so is an en dash
+		{"مقدمة سريعة", "مقدمة-سريعة"},
+		{"Café Crème", "café-crème"},
+	}
+	for _, tt := range tests {
+		if got := headingSlug(tt.heading); got != tt.want {
+			t.Errorf("headingSlug(%q) = %q, want %q", tt.heading, got, tt.want)
+		}
+	}
+}
+
+func TestMarkdownAnchors(t *testing.T) {
+	doc := strings.Join([]string{
+		"# Title",
+		"## Setup ##",
+		"## Setup",
+		"### Setup",
+		"```bash",
+		"# not a heading",
+		"```",
+		"Under line",
+		"==========",
+		"Second under line",
+		"---",
+		"",
+		"---",
+		"#nospace",
+		"## Custom {#my-id}",
+		`<a name="Old-Anchor"></a>`,
+		`<div class="x" id="box"></div>`,
+		"The `code` sits in # a sentence",
+	}, "\n")
+	want := []string{"title", "setup", "setup-1", "setup-2", "under-line", "second-under-line", "my-id", "old-anchor", "box"}
+	got := markdownAnchors(doc)
+	for _, a := range want {
+		if !got[a] {
+			t.Errorf("missing anchor %q in %v", a, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("got %d anchors, want %d: %v", len(got), len(want), got)
+	}
+}
+
+func TestMarkdownAnchorsWindowsLineEndings(t *testing.T) {
+	got := markdownAnchors("# One\r\n\r\nTwo words\r\n---\r\n")
+	if !got["one"] || !got["two-words"] {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestIsMarkdown(t *testing.T) {
 	for path, want := range map[string]bool{"README.md": true, "docs/A.MARKDOWN": true, "a.html": false, "notes": false} {
 		if got := isMarkdown(path); got != want {

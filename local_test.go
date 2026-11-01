@@ -125,6 +125,58 @@ func TestLocalCheckPagesLinkedWithoutAnExtension(t *testing.T) {
 	}
 }
 
+func TestLocalCheckAnchors(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"README.md":      "# Demo\n\n## Getting started\n\n## مقدمة\n",
+		"docs/setup.md":  "# Setup\n\n## Install\n\n```\n# comment\n```\n",
+		"docs/guide.mdx": "## Deep part\n",
+		"page.html":      `<h2 id="intro">Intro</h2><a name="old"></a>`,
+		"tool.py":        "print('hi')\n",
+	})
+	readme := filepath.Join(dir, "README.md")
+	tests := []struct {
+		target string
+		broken bool
+	}{
+		{"#getting-started", false},
+		{"#Getting-Started", false},
+		{"#getting-startd", true},
+		{"#%D9%85%D9%82%D8%AF%D9%85%D8%A9", false}, // مقدمة as a browser writes it
+		{"#مقدمة", false},
+		{"#user-content-getting-started", false},
+		{"#top", false},
+		{"#readme", false},
+		{"docs/setup.md#install", false},
+		{"docs/setup.md#instal", true},
+		{"docs/setup.md#comment", true},
+		{"docs/setup.md#readme", true},
+		{"docs/setup#install", false},
+		{"docs/guide#deep-part", false},
+		{"docs/guide#gone", true},
+		{"page.html#intro", false},
+		{"page.html#old", false},
+		{"page.html#gone", true},
+		{"tool.py#L10", false},
+		{"docs/setup.md?plain=1#L3", false},
+		{"#/about", false},
+		{"#!/about", false},
+	}
+	lc := NewLocalChecker("")
+	for _, tt := range tests {
+		r, ok := lc.Check(readme, tt.target)
+		if !ok {
+			t.Errorf("%s: should be checked", tt.target)
+			continue
+		}
+		if r.Broken() != tt.broken {
+			t.Errorf("%s: broken=%v (%s), want %v", tt.target, r.Broken(), r.Err, tt.broken)
+		}
+	}
+	if r, ok := lc.Check(readme, "#"); ok {
+		t.Errorf("an empty anchor is not a link to check: %+v", r)
+	}
+}
+
 func TestLocalCheckWrongCase(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"docs/setup.md": "", "README.md": ""})
 	source := filepath.Join(dir, "README.md")
