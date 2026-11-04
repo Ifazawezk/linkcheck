@@ -50,6 +50,7 @@ Exit code `1` means at least one link is broken. `2` means linkcheck couldn't do
 ## What it looks at
 
 - Links in Markdown (`[text](url)`, `[label]: url`, `<url>`) and HTML (`href`, `src`). Relative links on crawled pages are resolved.
+- Bare `https://...` URLs in Markdown text, which GitHub turns into links. Trailing punctuation is left off the way GitHub does it. Bare URLs that point at `localhost` or an example domain like `api.example.com` are skipped, since prose uses those for instructions and sample values.
 - Markdown fenced code blocks, inline code and HTML comments are skipped, since links there are usually sample text. Indented code blocks are still read. In HTML files, comments and the code inside `script` and `style` tags are skipped.
 - Relative links in files are checked against the disk, with the exact case of the file name, because a link that opens on Windows or macOS can be a 404 on GitHub. Each place a broken link appears is reported with its line number.
 - Anchors: `#setup` in the same file and `docs/guide.md#setup` in another. Headings get the anchor GitHub gives them, in any language, with `-1` and `-2` added to repeats. `{#custom-id}` after a heading and HTML `id` and `name` attributes count too. Case is ignored, and links like `script.py#L10` are left alone.

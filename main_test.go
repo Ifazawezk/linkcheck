@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -161,5 +162,15 @@ func TestRunExpandsWildcardsTheShellLeftAlone(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "no files match") {
 		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+func TestLinksInFileReadsBareURLsInMarkdownOnly(t *testing.T) {
+	doc := "Docs: https://go.dev/doc\n\n```\nhttps://in-code.dev\n```\n"
+	if got := linksInFile("a.md", doc); !reflect.DeepEqual(got, []Found{{"https://go.dev/doc", 1}}) {
+		t.Errorf("Markdown: got %v", got)
+	}
+	if got := linksInFile("a.html", "<p>https://go.dev/doc</p>"); len(got) != 0 {
+		t.Errorf("HTML: got %v", got)
 	}
 }

@@ -223,7 +223,7 @@ func linksInFile(path, doc string) []Found {
 	case isHTML(path):
 		return FindHTMLLinks(doc)
 	case isMarkdown(path):
-		return FindLinks(hideCode(doc))
+		return FindMarkdownLinks(hideCode(doc))
 	}
 	return FindLinks(doc)
 }
