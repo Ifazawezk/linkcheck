@@ -20,6 +20,7 @@ go install github.com/Ifazawezk/linkcheck@latest
 
 ```bash
 linkcheck README.md docs/*.md          # check files
+linkcheck docs                         # every Markdown and HTML file under docs
 linkcheck https://mysite.com           # crawl a site (1 level deep by default)
 linkcheck -depth 3 https://mysite.com  # follow same-site links 3 levels deep
 linkcheck -json README.md > links.json # full results as JSON
@@ -36,6 +37,8 @@ linkcheck -root public public/*.html   # also check links that start with /
 | `-ignore` | | skip links matching a regular expression |
 | `-retries` | 2 | extra attempts after a network error or 5xx response |
 | `-root` | | for files, the folder that links starting with `/` point into |
+
+A folder is searched for `.md` and `.html` files, skipping hidden folders and `node_modules`. Wildcards like `docs/*.md` also work in PowerShell and cmd, which pass them on as typed.
 
 Exit code `1` means at least one link is broken. `2` means linkcheck couldn't do the job: a bad flag, an unreadable file, or a crawl whose first page didn't load, so a site that is down never passes as "0 broken". In CI:
 

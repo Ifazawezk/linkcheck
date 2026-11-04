@@ -8,7 +8,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -69,8 +71,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			links = append(links, l)
 		}
 	}
-	for _, arg := range fs.Args() {
-		if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
+	args, err := expandArgs(fs.Args())
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	for _, arg := range args {
+		if isURL(arg) {
 			found, err := checker.Crawl(ctx, arg, *depth)
 			if err != nil {
 				fmt.Fprintln(stderr, err)
@@ -137,6 +144,77 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func isURL(arg string) bool {
+	return strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://")
+}
+
+// expandArgs replaces each folder with the Markdown and HTML files under it,
+// and expands wildcards like docs/*.md, which PowerShell and cmd pass on as
+// written. A file named twice is read once.
+func expandArgs(args []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if key := filepath.Clean(path); !seen[key] {
+			seen[key] = true
+			out = append(out, path)
+		}
+	}
+	for _, arg := range args {
+		if isURL(arg) {
+			out = append(out, arg)
+			continue
+		}
+		paths := []string{arg}
+		if _, err := os.Stat(arg); err != nil && strings.ContainsAny(arg, "*?[") {
+			matches, err := filepath.Glob(arg)
+			if err != nil {
+				return nil, fmt.Errorf("bad pattern %s: %v", arg, err)
+			}
+			if len(matches) == 0 {
+				return nil, fmt.Errorf("no files match %s", arg)
+			}
+			paths = matches
+		}
+		for _, path := range paths {
+			if info, err := os.Stat(path); err != nil || !info.IsDir() {
+				add(path) // a missing file is reported when it is read
+				continue
+			}
+			files, err := pagesIn(path)
+			if err != nil {
+				return nil, err
+			}
+			for _, f := range files {
+				add(f)
+			}
+		}
+	}
+	return out, nil
+}
+
+// pagesIn lists the Markdown and HTML files under dir, skipping hidden
+// folders like .git and installed packages in node_modules.
+func pagesIn(dir string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != dir && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if isMarkdown(path) || isHTML(path) {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files, err
 }
 
 // linksInFile finds the links in a file, reading it by its type.
