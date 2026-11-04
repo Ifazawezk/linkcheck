@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -114,5 +115,62 @@ func TestRunUsageErrors(t *testing.T) {
 		if code := run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
 		}
+	}
+}
+
+func TestRunChecksEveryFileInAFolder(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"docs/a.md":                       "[x](gone-a.md)\n",
+		"docs/guide/b.markdown":           "[x](gone-b.md)\n",
+		"docs/page.html":                  `<a href="gone-c.html">x</a>`,
+		"docs/notes.txt":                  "[x](not-read.md)\n",
+		"docs/.cache/old.md":              "[x](hidden.md)\n",
+		"docs/node_modules/pkg/README.md": "[x](vendored.md)\n",
+	})
+	var stdout, stderr bytes.Buffer
+	code := run([]string{filepath.Join(dir, "docs"), filepath.Join(dir, "docs", "a.md")}, &stdout, &stderr)
+	out := stdout.String()
+	if code != 1 || strings.Count(out, "BROKEN") != 3 {
+		t.Fatalf("exit %d, want 3 broken links:\n%s%s", code, out, stderr.String())
+	}
+	for _, name := range []string{"gone-a.md", "gone-b.md", "gone-c.html"} {
+		if !strings.Contains(out, name) {
+			t.Errorf("%s not reported:\n%s", name, out)
+		}
+	}
+}
+
+func TestRunExpandsWildcardsTheShellLeftAlone(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"docs/a.md":  "[x](gone-a.md)\n",
+		"docs/b.md":  "[ok](a.md)\n",
+		"docs/c.txt": "[x](gone-c.md)\n",
+	})
+	var stdout, stderr bytes.Buffer
+	code := run([]string{filepath.Join(dir, "docs", "*.md")}, &stdout, &stderr)
+	if code != 1 || strings.Count(stdout.String(), "BROKEN") != 1 || !strings.Contains(stdout.String(), "gone-a.md") {
+		t.Fatalf("exit %d, stdout:\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "2 links checked") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{filepath.Join(dir, "docs", "*.rst")}, &stdout, &stderr); code != 2 {
+		t.Errorf("a pattern that matches nothing: exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "no files match") {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+func TestLinksInFileReadsBareURLsInMarkdownOnly(t *testing.T) {
+	doc := "Docs: https://go.dev/doc\n\n```\nhttps://in-code.dev\n```\n"
+	if got := linksInFile("a.md", doc); !reflect.DeepEqual(got, []Found{{"https://go.dev/doc", 1}}) {
+		t.Errorf("Markdown: got %v", got)
+	}
+	if got := linksInFile("a.html", "<p>https://go.dev/doc</p>"); len(got) != 0 {
+		t.Errorf("HTML: got %v", got)
 	}
 }

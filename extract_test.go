@@ -78,3 +78,33 @@ func TestExtractHTMLResolvesRelative(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+func TestFindMarkdownLinksReadsBareURLs(t *testing.T) {
+	doc := "See https://go.dev/doc.\n" +
+		"(about https://w.org/wiki/Go_(language)) and (https://x.dev/a)\n" +
+		"[https://a.dev](https://a.dev/x) and <https://b.dev>\n" +
+		"[ref]: https://c.dev\n" +
+		"**https://d.dev/path?q=1**, done, and https://e.dev/a_b_\n" +
+		"<a href=\"https://f.dev\">f</a> x=https://not-a-link.dev\n"
+	want := []Found{
+		{"https://go.dev/doc", 1},
+		{"https://w.org/wiki/Go_(language)", 2}, {"https://x.dev/a", 2},
+		{"https://a.dev/x", 3}, {"https://b.dev", 3},
+		{"https://c.dev", 4},
+		{"https://d.dev/path?q=1", 5}, {"https://e.dev/a_b", 5},
+		{"https://f.dev", 6},
+	}
+	if got := FindMarkdownLinks(doc); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %v\nwant %v", got, want)
+	}
+}
+
+func TestFindMarkdownLinksSkipsPlaceholderHosts(t *testing.T) {
+	doc := "Start it and open http://localhost:3000 or http://127.0.0.1:8000/admin.\n" +
+		"Set API_URL to https://api.example.com/v1 or https://my.app.test/.\n" +
+		"[local](http://localhost:3000) is a real link, so it stays.\n"
+	want := []Found{{"http://localhost:3000", 3}}
+	if got := FindMarkdownLinks(doc); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

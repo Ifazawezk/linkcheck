@@ -15,6 +15,9 @@ var (
 	mdAutolink = regexp.MustCompile(`<(https?://[^>\s]+)>`)
 	// [label]: url reference definitions, but not [^1]: footnotes.
 	mdReference = regexp.MustCompile(`(?m)^ {0,3}\[[^\]^\n][^\]\n]*\]:[ \t]*<?([^\s<>]+)>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t\r]*$`)
+	// Bare URLs in text, which GitHub turns into links when they follow a
+	// space, the start of a line, or one of * _ ~ (.
+	mdBare = regexp.MustCompile(`(?m)(?:^|[\s*_~(])(https?://[^\s<]+)`)
 	// href="..." and src="..." in HTML.
 	htmlLink = regexp.MustCompile(`(?i)(?:href|src)\s*=\s*["']([^"']+)["']`)
 	// Comments, and script and style tags with what is inside them.
@@ -31,6 +34,59 @@ type Found struct {
 // unknown kind, in document order.
 func FindLinks(doc string) []Found {
 	return findLinks(doc, mdLink, mdAutolink, mdReference, htmlLink)
+}
+
+// FindMarkdownLinks is FindLinks plus the bare URLs in the text. Bare URLs
+// that point at localhost or a reserved example domain are left out, since
+// prose uses them for "open this once it runs" and sample settings.
+func FindMarkdownLinks(doc string) []Found {
+	found := FindLinks(doc)
+	b := []byte(doc)
+	for _, re := range []*regexp.Regexp{mdLink, mdAutolink, mdReference, htmlLink} {
+		for _, m := range re.FindAllStringIndex(doc, -1) {
+			blank(b, m[0], m[1])
+		}
+	}
+	for _, f := range findLinks(string(b), mdBare) {
+		if f.Target = trimBareURL(f.Target); !placeholderURL(f.Target) {
+			found = append(found, f)
+		}
+	}
+	slices.SortStableFunc(found, func(a, b Found) int { return a.Line - b.Line })
+	return found
+}
+
+// trimBareURL drops what GitHub leaves out of a bare link: trailing
+// punctuation and a closing parenthesis that has no opening one.
+func trimBareURL(s string) string {
+	for {
+		switch {
+		case strings.ContainsAny(s[len(s)-1:], "?!.,:*_~"):
+			s = s[:len(s)-1]
+		case strings.HasSuffix(s, ")") && strings.Count(s, ")") > strings.Count(s, "("):
+			s = s[:len(s)-1]
+		default:
+			return s
+		}
+	}
+}
+
+func placeholderURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "localhost", "127.0.0.1", "0.0.0.0", "::1", "example.com", "example.org", "example.net":
+		return true
+	}
+	for _, suffix := range []string{".localhost", ".example.com", ".example.org", ".example.net", ".example", ".test", ".invalid"} {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // FindHTMLLinks returns every link target in an HTML document. The Markdown
